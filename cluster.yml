@@ -1,6 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: A Shared ECS Cluster with a Shared Private Application Load balancer
 Parameters:
+  AdditionalSecurityGroup:
+    Type: String
+    Description: (Optional) Additional security group to attach to the ALB
+    Default: ''
   ApplicationPort:
     Type: Number
     Description: Fargate Container Application Port
@@ -12,11 +16,16 @@ Parameters:
     Description: Application Load Balancer SSL Negotiation Policy
     Default: ELBSecurityPolicy-2016-08
   Subnets:
-    Type: CommaDelimitedList
-    Description: Subnets for the Application Load Balancer
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets to deploy the Application Load Balancer into
   VpcId:
-    Type: String
+    Type: AWS::EC2::VPC::Id
     Description: VPC ID
+Conditions:
+  HasAdditionalSecurityGroup: !Not
+    - !Equals
+      - !Ref AdditionalSecurityGroup
+      - ''
 Resources:
   ECSCluster:
     Type: AWS::ECS::Cluster
@@ -58,7 +67,7 @@ Resources:
       GroupId: !Ref SharedApplicationLBSecurityGroup
       SourceSecurityGroupId: !Ref SharedApplicationSecurityGroup
       ToPort: 443
-  SharedApplicationLBSecurityGroupIngressFromClient:
+  SharedApplicationLBSecurityGroupIngressFromClientSG:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
       IpProtocol: tcp
@@ -72,6 +81,10 @@ Resources:
       Scheme: internal
       SecurityGroups:
         - !Ref SharedApplicationLBSecurityGroup
+        - !If
+          - HasAdditionalSecurityGroup
+          - !Ref AdditionalSecurityGroup
+          - !Ref AWS::NoValue
       Subnets: !Ref Subnets
   SharedListener:
     Type: AWS::ElasticLoadBalancingV2::Listener

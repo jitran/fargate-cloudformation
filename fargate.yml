@@ -40,10 +40,10 @@ Parameters:
     Default: ''
     Description: (Optional) Custom Task Role with all the IAM permissions required by the container
   Subnets:
-    Type: CommaDelimitedList
-    Description: Subnets for the Application Load Balancer
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subnets to deploy the Fargate Service into
   VpcId:
-    Type: String
+    Type: AWS::EC2::VPC::Id
     Description: VPC ID
 Conditions:
   HasCustomTaskRole: !Not [ !Equals [!Ref 'Role', ''] ]
