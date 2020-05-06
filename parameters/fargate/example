@@ -1,0 +1,13 @@
+ClusterStackName=fargate-cluster
+ContainerCpu=1024
+ContainerImage=nginxdemos/nginx-hello
+ContainerPort=8080
+ContainerMemory=2048
+ContainerPaths=/hello,/bye
+DesiredCount=1
+HealthCheckPath=/hello
+HostedZoneId=hosted.zone.
+ListenerRulePriority=1
+LogRetentionDays=7
+Subnets=subnet-1234567890,subnet-abcdefghij
+VpcId=vpc-1234567890

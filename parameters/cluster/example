@@ -1,0 +1,5 @@
+ApplicationPort=8080
+SSLCertificateId=arn:aws:acm:ap-southeast-2:1234567890:certificate/abcd-efgh-ijkl-mnop
+SSLNegotiationPolicy=ELBSecurityPolicy-2016-08
+Subnets=subnet-1234567890,subnet-abcdefghij
+VpcId=vpc-1234567890

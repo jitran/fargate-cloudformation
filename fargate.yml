@@ -1,0 +1,207 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: A Fargate Container
+Parameters:
+  ClusterStackName:
+    Type: String
+    Description: Stack name of the Shared ECS Cluster
+  ContainerCpu:
+    Type: Number
+    Description: Fargate Container CPU Allocation
+  ContainerImage:
+    Type: String
+    Description: Container Image
+  ContainerPort:
+    Type: Number
+    Description: Fargate Container Application Port
+  ContainerMemory:
+    Type: Number
+    Description: Fargate Container Memory Allocation
+  ContainerPaths:
+    Type: CommaDelimitedList
+    Description: Application paths to register with the Listener
+  DesiredCount:
+    Type: Number
+    Description: Desired number of Fargate service replicas
+  HealthCheckPath:
+    Type: String
+    Description: Application health check path
+  HostedZoneId:
+    Type: String
+    Description: Hosted Zone ID for the Record Set
+  ListenerRulePriority:
+    Type: String
+    Description: Listener Rule Priority Number
+  LogRetentionDays:
+    Type: String
+    Description: Number of days to retain the logs
+    Default: 7
+  Role:
+    Type: String
+    Default: ''
+    Description: (Optional) Custom Task Role with all the IAM permissions required by the container
+  Subnets:
+    Type: CommaDelimitedList
+    Description: Subnets for the Application Load Balancer
+  VpcId:
+    Type: String
+    Description: VPC ID
+Conditions:
+  HasCustomTaskRole: !Not [ !Equals [!Ref 'Role', ''] ]
+Resources:
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref LogRetentionDays
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+      Policies:
+        - PolicyDocument:
+            Statement:
+              Action:
+                - ecr:GetAuthorizationToken
+                - ecr:BatchCheckLayerAvailability
+                - ecr:GetDownloadUrlForLayer
+                - ecr:BatchGetImage
+              Effect: Allow
+              Resource: '*'
+          PolicyName: pull-ecr-images
+        - PolicyDocument:
+            Statement:
+              Action:
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Effect: Allow
+              Resource: !GetAtt LogGroup.Arn
+          PolicyName: put-log-events
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+      Policies:
+        - PolicyDocument:
+            Statement:
+              Action:
+                - ses:SendEmail
+              Effect: Allow
+              Resource: '*'
+          PolicyName: send-mail
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        - Environment:
+            - Name: ENVIRONMENT_VARIABLE1
+              Value: value1
+            - Name: ENVIRONMENT_VARIABLE2
+              Value: value2
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - !Sub "curl -f -k http://localhost:${ContainerPort}${HealthCheckPath} || exit 1"
+            Interval: 10
+            Retries: 3
+            Timeout: 5
+          Image: !Ref ContainerImage
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: app
+          Name: app
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+      Cpu: !Ref ContainerCpu
+      ExecutionRoleArn: !Ref ExecutionRole
+      Family: !Ref AWS::StackName
+      Memory: !Ref ContainerMemory
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      TaskRoleArn: !If
+        - HasCustomTaskRole
+        - !Ref Role
+        - !Ref TaskRole
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 20
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckPort: !Ref ContainerPort
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: 30
+      TargetType: ip
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref VpcId
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ClusterStackName
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+      DeploymentController:
+        Type: ECS
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      LoadBalancers:
+        - ContainerName: app
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - Fn::ImportValue: !Sub "${ClusterStackName}:SharedFargateContainerSecurityGroup"
+          Subnets: !Ref Subnets
+      PlatformVersion: LATEST
+      TaskDefinition: !Ref TaskDefinition
+  ListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+      Conditions:
+        - Field: path-pattern
+          PathPatternConfig:
+            Values: !Ref ContainerPaths
+      ListenerArn:
+        Fn::ImportValue: !Sub "${ClusterStackName}:SharedLoadBalancerListener"
+      Priority: !Ref ListenerRulePriority
+  RecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      Name: !Sub "${AWS::StackName}.${HostedZoneId}"
+      Type: A
+      AliasTarget:
+        DNSName:
+          Fn::ImportValue: !Sub "${ClusterStackName}:SharedLoadBalancerDNSName"
+        HostedZoneId:
+          Fn::ImportValue: !Sub "${ClusterStackName}:SharedLoadBalancerCanonicalHostedZoneID"
+      HostedZoneName: !Ref HostedZoneId
+Outputs:
+  RecordSetName:
+    Description: Record Set Name
+    Value: !Sub "${AWS::StackName}.${HostedZoneId}"
+    Export:
+      Name: !Sub "${AWS::StackName}:RecordSetName"

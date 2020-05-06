@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: A Shared ECS Cluster with a Shared Private Application Load balancer
+Parameters:
+  ApplicationPort:
+    Type: Number
+    Description: Fargate Container Application Port
+  SSLCertificateId:
+    Type: String
+    Description: Application Load Balancer SSL Certificate ARN
+  SSLNegotiationPolicy:
+    Type: String
+    Description: Application Load Balancer SSL Negotiation Policy
+    Default: ELBSecurityPolicy-2016-08
+  Subnets:
+    Type: CommaDelimitedList
+    Description: Subnets for the Application Load Balancer
+  VpcId:
+    Type: String
+    Description: VPC ID
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Ref AWS::StackName
+  SharedApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Shared Fargate Container Security Group
+      VpcId: !Ref VpcId
+  SharedApplicationLBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Shared ALB Security Group
+      SecurityGroupEgress:
+        - DestinationSecurityGroupId: !Ref SharedApplicationSecurityGroup
+          FromPort: !Ref ApplicationPort
+          IpProtocol: tcp
+          ToPort: !Ref ApplicationPort
+      VpcId: !Ref VpcId
+  ClientSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Client Security Group
+      VpcId: !Ref VpcId
+  SharedApplicationSecurityGroupIngressFromALB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: !Ref ApplicationPort
+      GroupId: !Ref SharedApplicationSecurityGroup
+      SourceSecurityGroupId: !Ref SharedApplicationLBSecurityGroup
+      ToPort: !Ref ApplicationPort
+  SharedApplicationLBSecurityGroupIngressFromFargateContainer:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 443
+      GroupId: !Ref SharedApplicationLBSecurityGroup
+      SourceSecurityGroupId: !Ref SharedApplicationSecurityGroup
+      ToPort: 443
+  SharedApplicationLBSecurityGroupIngressFromClient:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      IpProtocol: tcp
+      FromPort: 443
+      GroupId: !Ref SharedApplicationLBSecurityGroup
+      SourceSecurityGroupId: !Ref ClientSecurityGroup
+      ToPort: 443
+  SharedLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internal
+      SecurityGroups:
+        - !Ref SharedApplicationLBSecurityGroup
+      Subnets: !Ref Subnets
+  SharedListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - FixedResponseConfig:
+            ContentType: text/plain
+            MessageBody: You have reached the the Load Balancer, but not matched any of the listener rules
+            StatusCode: '200'
+          Type: fixed-response
+      LoadBalancerArn: !Ref SharedLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref SSLCertificateId
+      SslPolicy: !Ref SSLNegotiationPolicy
+Outputs:
+  SharedLoadBalancerDNSName:
+    Description: Shared Load Balancer DNS Name
+    Value: !GetAtt SharedLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${AWS::StackName}:SharedLoadBalancerDNSName"
+  SharedLoadBalancerCanonicalHostedZoneID:
+    Description: Shared Load Balancer Canonical Hosted Zone ID
+    Value: !GetAtt SharedLoadBalancer.CanonicalHostedZoneID
+    Export:
+      Name: !Sub "${AWS::StackName}:SharedLoadBalancerCanonicalHostedZoneID"
+  SharedLoadBalancerListener:
+    Description: Shared Load Balancer Listener
+    Value: !Ref SharedListener
+    Export:
+      Name: !Sub "${AWS::StackName}:SharedLoadBalancerListener"
+  SharedFargateContainerSecurityGroup:
+    Description: Shared Fargate Security Group
+    Value: !Ref SharedApplicationSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}:SharedFargateContainerSecurityGroup"
+  ClientSecurityGroup:
+    Description: Client Security Group
+    Value: !Ref ClientSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}:ClientSecurityGroup"
